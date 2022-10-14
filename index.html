@@ -1,0 +1,272 @@
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+<script src="./js/taxref.js"></script>
+<script src="./js/CorineBiotope.js"></script>
+<script src="./js/config.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/calvinmetcalf/text-encoding@4aff951959085f74a5872aeed8d79ec95b6c74c3/lib/encoding-indexes.js"></script>
+<script src="https://unpkg.com/shpjs@latest/dist/shp.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.2/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.2/dist/leaflet.js"></script>
+
+<div id="app" class="column">
+  <img class="title" src="https://www.edf.fr/themes/custom/nova/assets/images/00-tokens/logos/images/logo-edf.svg" style="height:29px"></img>
+  <h1 class="title" >Outil de contrôle des données biodiversité DIPDE (v{{version}})</h1>
+  <div class="field">
+    <label class="label">Identifiant étude</label>
+    <div class="control">
+      <input type="text" v-model="idetude" placeholder="SSS_AAAA_TTT_L" title="Format: SSS_AAAA_TTT_L  site_année_titulaire_lot">
+    </div>
+  </div>
+  <div class="field">
+    <label class="label">Zip contenant les livrables </label>
+    <div class="control">
+      <input type="file" ref="livrables" accept=".zip">
+    </div>
+  </div>
+  <div class="field">
+    <label class="label">Si couche photo existe, selectionner toutes les photos associées</label>
+    <div class="control">
+      <input type="file" ref="photos" multiple="multiple" id="photos">
+    </div>
+  </div>
+  <div class="field">
+    <div class="control">
+      <button class="button is-link" @click="valider">Lancer la validation</button>
+    </div>
+  </div>
+  <div v-show="message" class="block">
+    {{message}}
+    <div v-if="Object.keys(this.errors).length>0" style="color: red">
+      <ul>
+        <li v-for="layer in Object.keys(errors)" :key="layer">Couche {{layer}}
+          <ul><li v-for="shp in Object.keys(errors[layer])" :key="layer+shp">- {{shp}}
+            <ul><li v-for="field in Object.keys(errors[layer][shp])" :key="layer+shp+field">- - {{field}} : {{errors[layer][shp][field].message}}  ({{errors[layer][shp][field].errors_values}} - rappel: {{errors[layer][shp][field].valid_values}})
+            </li></ul>
+          </li></ul>
+        </li>
+      </ul>
+    </div>
+  </div>
+  <div>
+    <p class="subtitle is-3">Visualiser les données (carte + table)</p>
+      <div id="map" style="height: 500px"></div>
+      <div class="tabs" v-if="layers">
+        <ul>
+          <li v-for="(layer,id) in layers" @click="tableLayer=layer" :ref="id"><a>{{layer.fileName}}</a></li>
+        </ul>
+      </div>
+     <div style="height:500px;overflow:auto; ">
+        <table v-if="tableLayer" >
+          <tr><th v-for="field,idf in Object.keys(tableLayer.features[0].properties)" :ref="id+'-'+idf">{{field}}</th></tr>
+          <tr v-for="feat,idx in tableLayer.features" :ref="id+'-'+idx" :style="{backgroundColor: feat.properties.validation_error?'red':null}">
+            <td v-for="(value,key,index) in feat.properties" :ref="id+'-'+idx+'-'+index">{{value}}</td>
+          </tr>
+        </table>
+      </div>
+  </div>
+  <p>Contact: {{contact}}</p>
+</div>
+
+<script type="module">
+  const { createApp } = Vue
+  taxref = taxref.map(x=>x.toString());
+  createApp({
+    data() {
+      return {
+        version: 1,
+        contact: "dpnt-dipde-sig (@) edf.fr",
+        //config: config,
+        message: null,
+        idetude: null,
+        reader: null,
+        errors: {},
+        layers: [],
+        tableLayer: null,
+        version:version
+      }
+    },
+    mounted(){
+      this.map = L.map('map').setView([47.20, 2.873], 6);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      }).addTo(this.map);
+    },
+    methods:{
+      valider(){
+        this.message="Validation en cours ... veuillez patienter"
+        this.errors={};
+        this.layers={};
+        if(!this.idetude){
+          this.message="Renseigner IDETUDE";
+          return
+        };
+        if(this.$refs.livrables.files.length==0){
+          this.message="Renseigner livrables (fichiers SHP zippés)";
+          return
+        };
+        this.photos = Array.from(this.$refs.photos.files).map(x=>x.name.toLowerCase());
+        this.reader = new FileReader();
+        this.reader.onload = this.readSHPZIP;
+        this.reader.onerror = ()=>{this.message="Erreur lors de la lecture du ZIP: "+this.reader.error;}
+        this.reader.readAsArrayBuffer(this.$refs.livrables.files[0]);
+      },
+      async readSHPZIP(event){
+        try{
+          var layers = await shp(event.target.result);
+          if(!Array.isArray(layers)){ // une seule couche contenue dans le zip
+						layers=[layers];
+					}
+          this.layers=layers;
+          this.tableLayer = layers[0];
+          this.checkLayers(this.layers);
+        }catch(e){
+          this.message="Erreur lors de la lecture du ZIP"
+          console.log(e)
+          return
+        }
+      },
+      drawLayers(layers){
+        this.map.eachLayer( (layer) =>{
+            this.map.removeLayer(layer);
+        });
+        if(this.layercontrol){this.layercontrol.remove(this.map);}
+        const baseLayers = { 'OSM' : L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).addTo(this.map)};
+        var overlays = {};
+        var zoom = false;
+        for(let l of layers){
+          overlays[l.fileName]=L.geoJSON(l, {
+              style:  function(feature){
+                if(feature.properties.validation_error==1){
+                  return {color:"red"}
+                }else{
+                  return {color:"green"}
+                }
+              }
+          }).bindPopup( (layer) =>{
+              return this.popup(layer.feature.properties);
+          }).addTo(this.map)
+          if(!zoom){
+            this.map.flyToBounds(overlays[l.fileName].getBounds());
+            zoom=true;
+          }
+          
+        };
+        this.layercontrol = L.control.layers(baseLayers, overlays,{collapsed:false,}).addTo(this.map);
+      },
+      popup(properties){
+        var res = ""
+        for(let key in properties){
+          res+="<p>"+key+": "+properties[key]+"</p>"
+        }
+        return res
+      },
+      checkLayers(layers){
+        this.errors={};
+        let tables = Object.keys(config);
+        for( let table of tables){ // Pour chaque table définie dans les règles
+          var regles_table = Object.assign({}, config[table]); // copier sans référence
+          this.errors[table]={};
+          let shp_tables = layers.filter(x=>x.fileName.match(regles_table.nom)) // Trouver els livrables associés
+          /*if(shp_tables.length==0){
+            this.errors[table].absent = true;
+          }*/
+          for(let shp_table of shp_tables){ // pour chaque livrable
+            this.checkFields(shp_table,regles_table, table);
+          }
+        }
+        this.purgeErrors();
+        this.showErrors();
+        this.drawLayers(this.layers);
+        return
+      },
+      checkFields(shp_table,regles_table, tablename){
+        var regles_champs = []; // copier sans référence
+        for(let champ of regles_table.champs){
+            regles_champs.push(Object.assign({}, champ))
+        }
+        regles_champs.push({nom: /idetude/i, liste:[this.idetude]}); // ajout controle idetude
+        //existence des champs
+        const data_fields = Object.keys(shp_table.features[0].properties);
+        var regles=[];
+        this.errors[tablename][shp_table.fileName]={};
+        for(let f of regles_champs){ // pour chaque champ
+          let res = data_fields.filter(x=>x.match(f.nom)) // controler existence
+          if(res.length==0){
+            this.errors[tablename][shp_table.fileName][f.nom.toString()]={"Tous": ["Champ non trouvé","","obligatoire"]};
+            //champ non trouvé (erreur + pas de controle par la suite)
+          }else{
+            f.nom = res[0].toString(); // on indique le vrai nom du champ pour la suite en remplacement du regex
+            regles.push(Object.assign({}, f));
+            this.errors[tablename][shp_table.fileName][res[0]]={}; 
+          }
+        }
+        //Controle des données
+        this.checkRows(shp_table,regles,tablename);
+      },
+      checkRows(shp_table,regles_champs,tablename){
+        var id=0;
+        for(let feat of shp_table.features){ // pour chaque ligne
+            id+=1;
+            for(let f of regles_champs){ // controle pour chaque champ défini dans les regles
+              //if(!this.errors[tablename][shp_table.fileName][f.nom]){this.errors[tablename][shp_table.fileName][f.nom]={};}
+              let value = feat.properties[f.nom];
+              if([null,'',' ','-','null','NULL','Null'].includes(value)){this.errors[tablename][shp_table.fileName][f.nom][id] = ["Non reseigné",value,'*'];feat.properties.validation_error=1;}
+              else if(f.type == "date" && !(moment(value.toString(), "DD/MM/YYYY").isValid())){this.errors[tablename][shp_table.fileName][f.nom][id] = ["Date non valide",value,'JJ/MM/YYYY'];feat.properties.validation_error=1;}
+              else if(f.liste && !f.liste.includes(value.toString())){
+                this.errors[tablename][shp_table.fileName][f.nom][id] = ["Liste de valeur non respectée",value,(f.liste.length>10)?f.liste.slice(0,10).join(', ')+", ...":f.liste.join(', ')]; 
+                feat.properties.validation_error=1;
+              }
+              else if(f.type=='photo' && !this.photos.includes(value.toString().toLowerCase())){this.errors[tablename][shp_table.fileName][f.nom][id] = ["Photo non valide ou non trouvée",value,(this.photos.length>10)?this.photos.slice(0,10).join(', ')+", ...":this.photos.join(', ')];feat.properties.validation_error=1;}
+            }
+        }
+      },
+      purgeErrors(){
+        console.log(JSON.parse(JSON.stringify(this.errors)));
+        for(let layer in this.errors){
+          if(Object.keys(this.errors[layer]).length==0){delete this.errors[layer];}
+          else{
+            for(let shp in this.errors[layer]){
+              if(Object.keys(this.errors[layer][shp]).length==0){delete this.errors[layer][shp]}
+              else{
+                for(let field in this.errors[layer][shp]){
+                  console.log(field);
+                  if(Object.keys(this.errors[layer][shp][field]).length==0){delete this.errors[layer][shp][field]}
+                  else{
+                    var errors = [];
+                    var ids = [];
+                    for(let id in this.errors[layer][shp][field]){
+                      ids.push(id);
+                      if(!errors.includes(this.errors[layer][shp][field][id][1])){
+                        errors.push(this.errors[layer][shp][field][id][1]);
+                      }
+                    }
+                    this.errors[layer][shp][field].ids = ids;
+                    this.errors[layer][shp][field].errors_values = errors.join(', ');
+                    this.errors[layer][shp][field].message = this.errors[layer][shp][field][ids[0]][0];
+                    this.errors[layer][shp][field].valid_values = this.errors[layer][shp][field][ids[0]][2];
+                    for(let id of ids){
+                      delete this.errors[layer][shp][field][id]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      showErrors(){
+        if(Object.keys(this.errors).length==0){
+          this.message = "Les données sont valides"
+          return;
+        }
+        //Afficher les erreurs
+        this.message = "Données non valides - voir détail ci-dessous"
+      }
+    }
+  }).mount('#app')
+</script>
