@@ -216,12 +216,13 @@
               //if(!this.errors[tablename][shp_table.fileName][f.nom]){this.errors[tablename][shp_table.fileName][f.nom]={};}
               let value = feat.properties[f.nom];
               if([null,'',' ','-','null','NULL','Null'].includes(value)){this.errors[tablename][shp_table.fileName][f.nom][id] = ["Non reseigné",value,'*'];feat.properties.validation_error=1;}
-              else if(f.type == "date" && !(moment(value.toString(), "DD/MM/YYYY").isValid())){this.errors[tablename][shp_table.fileName][f.nom][id] = ["Date non valide",value,'JJ/MM/YYYY'];feat.properties.validation_error=1;}
+              else if(f.type == "date" && !(value instanceof Date || (moment(value.toString(), "DD/MM/YYYY").isValid()))){this.errors[tablename][shp_table.fileName][f.nom][id] = ["Date non valide",value,'JJ/MM/YYYY'];feat.properties.validation_error=1;}
               else if(f.liste && !f.liste.includes(value.toString())){
                 this.errors[tablename][shp_table.fileName][f.nom][id] = ["Liste de valeur non respectée",value,(f.liste.length>10)?f.liste.slice(0,10).join(', ')+", ...":f.liste.join(', ')]; 
                 feat.properties.validation_error=1;
               }
               else if(f.type=='photo' && !this.photos.includes(value.toString().toLowerCase())){this.errors[tablename][shp_table.fileName][f.nom][id] = ["Photo non valide ou non trouvée",value,(this.photos.length>10)?this.photos.slice(0,10).join(', ')+", ...":this.photos.join(', ')];feat.properties.validation_error=1;}
+              else if(f.type=='nombre' && typeof value != 'number'){this.errors[tablename][shp_table.fileName][f.nom][id] = ["Nombre attendu",value,'Numérique'];feat.properties.validation_error=1;}
             }
         }
       },
