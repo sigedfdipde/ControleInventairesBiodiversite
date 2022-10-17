@@ -15,7 +15,7 @@ const config = {
       { nom: /dateobs/i, type: "date" },
       { nom: /typeobs/i, liste: ["amphibien", "chiroptère", "flore", "insecte", "invertébré", "lépidoptère", "mammifère", "mollusque", "odonate", "oiseau", "orthoptère", "poisson", "reptile"] },
       { nom: /IdTaxRef/i, liste: taxref },
-      { nom: /nomvalid/},
+      { nom: /nomvalid/i},
       { nom: /nombre/i, type:"integer"},
       { nom: /invasi/i, type:"boolean"}
     ]
